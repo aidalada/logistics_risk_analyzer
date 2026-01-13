@@ -23,3 +23,12 @@ class Order(Base):
     owner_id = Column(Integer, ForeignKey("users.id"))
     driver_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class OrderHistory(Base):
+    __tablename__ = "order_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"))
+    old_status = Column(String, nullable=True)
+    new_status = Column(String)
+    changed_at = Column(DateTime(timezone=True), server_default=func.now())
