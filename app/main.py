@@ -1,3 +1,6 @@
+import csv
+from io import StringIO
+from fastapi.responses import StreamingResponse
 from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import engine, Base, get_db
@@ -7,16 +10,29 @@ from app.core import security
 from fastapi.security import OAuth2PasswordRequestForm
 from app.core.security import verify_password, create_access_token
 from jose import JWTError, jwt
-from typing import List
+from typing import List, Optional
 from app.models import order as order_model
 from app.schemas import order as order_schema
 from app.services import ml_service
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Logistics CRM API")
 
 # Создаем таблицы при запуске (на всякий случай, хотя у нас есть Alembic)
 Base.metadata.create_all(bind=engine)
 
+origins = [
+    "http://localhost:3000", # Стандарт для Next.js/React
+    "http://127.0.0.1:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"], # Разрешаем все методы (GET, POST, PATCH и т.д.)
+    allow_headers=["*"], # Разрешаем все заголовки (включая Authorization)
+)
 
 @app.post("/register", response_model=user_schema.UserOut)
 def register_user(user: user_schema.UserCreate, db: Session = Depends(get_db)):
@@ -233,3 +249,51 @@ def verify_driver(
     driver.is_verified = verify
     db.commit()
     return {"message": f"Driver verification set to {verify}"}
+
+
+@app.get("/orders", response_model=List[order_schema.OrderOut])
+def get_orders(
+        search: Optional[str] = None,
+        status: Optional[str] = None,
+        db: Session = Depends(get_db),
+        current_user: user_model.User = Depends(get_current_user)
+):
+    query = db.query(order_model.Order)
+
+    # Фильтр по владельцу, если не админ
+    if current_user.role != "admin":
+        query = query.filter(order_model.Order.owner_id == current_user.id)
+
+    # Поиск по описанию или адресу
+    if search:
+        query = query.filter(
+            (order_model.Order.cargo_description.ilike(f"%{search}%")) |
+            (order_model.Order.destination.ilike(f"%{search}%"))
+        )
+
+    # Фильтр по статусу
+    if status:
+        query = query.filter(order_model.Order.status == status)
+
+    return query.all()
+
+
+@app.get("/analytics/export-csv")
+def export_orders_csv(db: Session = Depends(get_db), current_user: user_model.User = Depends(get_current_user)):
+    if current_user.role not in ["admin", "manager"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    orders = db.query(order_model.Order).all()
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "Description", "Destination", "Risk Level", "Status", "Date"])
+
+    for order in orders:
+        writer.writerow(
+            [order.id, order.cargo_description, order.destination, order.risk_level, order.status, order.delivery_date])
+
+    output.seek(0)
+    return StreamingResponse(output, media_type="text/csv",
+                             headers={"Content-Disposition": "attachment; filename=orders_report.csv"})
+
