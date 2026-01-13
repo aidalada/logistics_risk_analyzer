@@ -18,3 +18,10 @@ class OrderOut(OrderCreate):
 
     class Config:
         from_attributes = True
+
+
+class AnalyticsSummary(BaseModel):
+    total_orders: int
+    high_risk_count: int
+    in_transit_count: int
+    delivered_count: int
