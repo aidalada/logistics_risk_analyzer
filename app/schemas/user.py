@@ -15,3 +15,10 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True # Позволяет Pydantic работать с моделями SQLAlchemy
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    email: Optional[str] = None

@@ -4,6 +4,8 @@ from app.core.database import engine, Base, get_db
 from app.models import user as user_model
 from app.schemas import user as user_schema
 from app.core import security
+from fastapi.security import OAuth2PasswordRequestForm
+from app.core.security import verify_password, create_access_token
 
 app = FastAPI(title="Logistics CRM API")
 
@@ -37,3 +39,18 @@ def register_user(user: user_schema.UserCreate, db: Session = Depends(get_db)):
 @app.get("/")
 def read_root():
     return {"status": "API is working"}
+
+
+@app.post("/login", response_model=user_schema.Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    # 1. Ищем пользователя
+    user = db.query(user_model.User).filter(user_model.User.email == form_data.username).first()
+
+    # 2. Проверяем пароль
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Неверный email или пароль")
+
+    # 3. Создаем токен
+    access_token = create_access_token(data={"sub": user.email})
+
+    return {"access_token": access_token, "token_type": "bearer"}
