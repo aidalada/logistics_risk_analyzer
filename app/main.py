@@ -7,6 +7,10 @@ from app.core import security
 from fastapi.security import OAuth2PasswordRequestForm
 from app.core.security import verify_password, create_access_token
 from jose import JWTError, jwt
+from typing import List
+from app.models import order as order_model
+from app.schemas import order as order_schema
+from app.services import ml_service
 
 app = FastAPI(title="Logistics CRM API")
 
@@ -78,3 +82,45 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     access_token = create_access_token(data={"sub": user.email})
 
     return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/orders", response_model=order_schema.OrderOut)
+def create_order(
+    order: order_schema.OrderCreate,
+    db: Session = Depends(get_db),
+    current_user: user_model.User = Depends(get_current_user)
+):
+    # 1. Предикт риска (подставляем данные из заказа + заглушки для опыта и погоды)
+    risk_score, risk_level = ml_service.predict_risk(
+        distance=order.distance,
+        cargo_type=order.cargo_type,
+        driver_exp=3, # В будущем можно брать из профиля выбранного водителя
+        hour=12,
+        weather=0
+    )
+
+    # 2. Сохранение
+    new_order = order_model.Order(
+        **order.model_dump(),
+        risk_score=risk_score,
+        risk_level=risk_level,
+        owner_id=current_user.id,
+        status="New"
+    )
+    db.add(new_order)
+    db.commit()
+    db.refresh(new_order)
+    return new_order
+
+@app.get("/orders", response_model=List[order_schema.OrderOut])
+def get_orders(db: Session = Depends(get_db), current_user: user_model.User = Depends(get_current_user)):
+    # Возвращаем все заказы (для админа) или только свои (для клиента/водителя)
+    if current_user.role == "admin":
+        return db.query(order_model.Order).all()
+    return db.query(order_model.Order).filter(order_model.Order.owner_id == current_user.id).all()
+
+@app.get("/orders/{order_id}", response_model=order_schema.OrderOut)
+def get_order_details(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(order_model.Order).filter(order_model.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return order
