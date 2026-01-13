@@ -124,3 +124,72 @@ def get_order_details(order_id: int, db: Session = Depends(get_db)):
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
+
+@app.get("/analytics/summary", response_model=order_schema.AnalyticsSummary)
+def get_analytics_summary(
+    db: Session = Depends(get_db),
+    current_user: user_model.User = Depends(get_current_user)
+):
+    # Если ты админ — видишь всё. Если клиент — только свою статистику.
+    query = db.query(order_model.Order)
+    if current_user.role != "admin":
+        query = query.filter(order_model.Order.owner_id == current_user.id)
+
+    total = query.count()
+    high_risk = query.filter(order_model.Order.risk_level == "High").count()
+    in_transit = query.filter(order_model.Order.status == "In Transit").count()
+    delivered = query.filter(order_model.Order.status == "Delivered").count()
+
+    return {
+        "total_orders": total,
+        "high_risk_count": high_risk,
+        "in_transit_count": in_transit,
+        "delivered_count": delivered
+    }
+
+
+@app.patch("/orders/{order_id}/status", response_model=order_schema.OrderOut)
+def update_order_status(
+        order_id: int,
+        new_status: str,
+        db: Session = Depends(get_db),
+        current_user: user_model.User = Depends(get_current_user)
+):
+    order = db.query(order_model.Order).filter(order_model.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # Допустимые статусы: New, In Transit, Delivered, Cancelled
+    order.status = new_status
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+@app.patch("/orders/{order_id}/status", response_model=order_schema.OrderOut)
+def update_order_status(
+        order_id: int,
+        new_status: str,
+        db: Session = Depends(get_db),
+        current_user: user_model.User = Depends(get_current_user)
+):
+    # Ищем заказ в базе
+    order = db.query(order_model.Order).filter(order_model.Order.id == order_id).first()
+
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # Список разрешенных статусов из твоего ТЗ/Figma
+    allowed_statuses = ["New", "In Transit", "Delivered", "Cancelled"]
+
+    if new_status not in allowed_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Choose from: {', '.join(allowed_statuses)}"
+        )
+
+    # Обновляем и сохраняем
+    order.status = new_status
+    db.commit()
+    db.refresh(order)
+    return order
