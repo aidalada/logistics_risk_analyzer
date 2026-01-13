@@ -5,16 +5,20 @@ from typing import Optional
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
+    full_name: str  # Добавляем имя при регистрации
 
 # Что мы отдаем пользователю (нельзя отдавать пароль!)
 class UserOut(BaseModel):
     id: int
     email: EmailStr
+    full_name: Optional[str]
     role: str
+    is_verified: bool
+    delay_count: int
     is_active: bool
 
     class Config:
-        from_attributes = True # Позволяет Pydantic работать с моделями SQLAlchemy
+        from_attributes = True
 
 class Token(BaseModel):
     access_token: str
