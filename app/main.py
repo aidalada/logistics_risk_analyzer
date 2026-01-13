@@ -193,3 +193,43 @@ def update_order_status(
     db.commit()
     db.refresh(order)
     return order
+
+
+@app.patch("/orders/{order_id}/status")
+def update_order_status(order_id: int, new_status: str, db: Session = Depends(get_db)):
+    order = db.query(order_model.Order).filter(order_model.Order.id == order_id).first()
+
+    # Сохраняем старый статус для истории
+    old_status = order.status
+    order.status = new_status
+
+    # Создаем запись в истории
+    history_entry = order_model.OrderHistory(
+        order_id=order.id,
+        old_status=old_status,
+        new_status=new_status
+    )
+
+    db.add(history_entry)
+    db.commit()
+    return {"message": "Status updated and history logged"}
+
+
+@app.patch("/users/drivers/{user_id}/verify")
+def verify_driver(
+    user_id: int,
+    verify: bool,
+    db: Session = Depends(get_db),
+    current_user: user_model.User = Depends(get_current_user)
+):
+    # Проверка на админа (только админ может одобрять)
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    driver = db.query(user_model.User).filter(user_model.User.id == user_id).first()
+    if not driver or driver.role != "driver":
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    driver.is_verified = verify
+    db.commit()
+    return {"message": f"Driver verification set to {verify}"}
