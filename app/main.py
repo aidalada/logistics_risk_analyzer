@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import engine, Base, get_db
 from app.models import user as user_model
@@ -6,6 +6,7 @@ from app.schemas import user as user_schema
 from app.core import security
 from fastapi.security import OAuth2PasswordRequestForm
 from app.core.security import verify_password, create_access_token
+from jose import JWTError, jwt
 
 app = FastAPI(title="Logistics CRM API")
 
@@ -27,6 +28,7 @@ def register_user(user: user_schema.UserCreate, db: Session = Depends(get_db)):
     new_user = user_model.User(
         email=user.email,
         hashed_password=hashed_pwd,
+        full_name=user.full_name,
         role="client"  # По умолчанию роль - клиент
     )
 
@@ -35,10 +37,32 @@ def register_user(user: user_schema.UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
     return new_user
 
+def get_current_user(db: Session = Depends(get_db), token: str = Depends(security.oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(user_model.User).filter(user_model.User.email == email).first()
+    if user is None:
+        raise credentials_exception
+    return user
 
 @app.get("/")
 def read_root():
     return {"status": "API is working"}
+
+@app.get("/users/me", response_model=user_schema.UserOut)
+def read_users_me(current_user: user_model.User = Depends(get_current_user)):
+    return current_user
 
 
 @app.post("/login", response_model=user_schema.Token)
