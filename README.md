@@ -1,74 +1,64 @@
-Logistics Risk Management System
+# Logistics Risk Management System
 
-This is a web application for managing logistics and predicting delivery risks using Machine Learning. It helps companies track orders, manage drivers, and see analytics in real-time.
+This is a web application for managing logistics and predicting delivery risks using **Machine Learning**. It helps companies track orders, manage drivers, and see analytics in real-time.
 
- Key Features
 
-    User Roles: Different access for Admin, Manager, Driver, and Client.
 
-Order Management: Create, edit, and track orders with statuses like "New", "In Transit", and "Delivered".
+## Key Features
 
-AI Risk Assessment: A Machine Learning (Random Forest) model predicts if a delivery is High, Medium, or Low risk .
+**User Roles**: Different access levels for Admin, Manager, Driver, and Client.
+**Order Management**: Create, search, and track orders with statuses like "New", "In Transit", "Delivered", and "Cancelled".
+**AI Risk Assessment**: A **Machine Learning (Random Forest)** model predicts if a delivery is High, Medium, or Low risk based on distance, cargo type, and timing.
+**Dashboard & Analytics**: Real-time stats on total orders and risk distribution.
+**Order Timeline**: Automatically logs every status change for a full history of the order.
+**Data Export**: Download order reports in **CSV** format for business analysis.
 
-Dashboard & Analytics: Real-time stats on total orders and risks.
+## Tech Stack
 
-Order Timeline: Automatically logs every status change for history.
+* **Backend**: FastAPI (Python 3.13).
+* **Database**: PostgreSQL with SQLAlchemy ORM.
+* **Migrations**: Alembic.
+* **Machine Learning**: Scikit-learn (Random Forest Classifier).
+* **Security**: JWT Authentication (Login/Register/Protected Routes).
+* **Infrastructure**: Docker & Docker-compose.
 
-Data Export: Download order reports in CSV format.
+## Project Structure
 
- Tech Stack
-
-    Backend: FastAPI (Python 3.13).
-
-    Database: PostgreSQL with SQLAlchemy ORM.
-
-    Migrations: Alembic.
-
-    Machine Learning: Scikit-learn (Random Forest Model).
-
-    Security: JWT Authentication.
-
-    Container: Docker & Docker-compose.
-
- Project Structure
-Plaintext
-
+```text
 logistics_project/
-├── alembic/            # Database migrations
+├── alembic/            # Database migrations and version control
 ├── app/
-│   ├── core/           # Security and Database config
-│   ├── models/         # SQLAlchemy models (User, Order)
-│   ├── schemas/        # Pydantic schemas
-│   ├── services/       # ML logic and .pkl model file
-│   └── main.py         # Main API routes
-├── ml_research/        # Dataset and model training code
-├── docker-compose.yml  # Docker configuration
-└── requirements.txt    # Python dependencies
+│   ├── core/           # Security, JWT, and Database connection
+│   ├── models/         # Database models (User, Order, OrderHistory)
+│   ├── schemas/        # Pydantic data validation schemas
+│   ├── services/       # ML service and .pkl model files
+│   └── main.py         # Main API routes and logic
+├── ml_research/        # Dataset and model training notebooks/scripts
+├── docker-compose.yml  # Docker environment setup
+└── requirements.txt    # Project dependencies
+```
 
- How to Run
 
-    Clone the project:
-    Bash
+## How to Run
+1) Clone the repository:
+Bash
 
 git clone <your-repository-url>
 cd logistics_project
 
-Start with Docker:
+2) Start the system with Docker:
 Bash
 
 docker-compose up --build
 
-Run Migrations:
+3) Apply database migrations:
 Bash
 
-    docker-compose exec app alembic upgrade head
+docker-compose exec app alembic upgrade head
 
- API Documentation
+## API Documentation
+The API documentation is automatically generated. Once the server is running, visit:
+* **Swagger UI**: http://127.0.0.1:8000/docs
 
-Once the server is running, you can see the interactive API documentation at:
-
-    Swagger UI: http://127.0.0.1:8000/docs.
-
- Why Machine Learning?
-
-Instead of using simple math, this system uses a Random Forest Classifier. It analyzes distance, cargo type, and time to give a smart risk level, making the logistics process safer and more predictable.
+##  Why use Machine Learning?
+Instead of using fixed rules, this system uses a Random Forest model trained on historical data. It provides a percentage-based risk score, helping managers prioritize high-risk deliveries and reduce potential delays.
