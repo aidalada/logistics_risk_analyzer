@@ -1,7 +1,5 @@
-version: '3.8'
-
 services:
-  db:
+  logistics_db:
     image: postgres:15
     container_name: logistics_db
     restart: always
@@ -13,6 +11,17 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    container_name: logistics_app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - logistics_db
+    environment:
+      - DATABASE_URL=postgresql://user:password@logistics_db:5432/logistics_risk_db
+      - JWT_SECRET=your_secret_key
 
 volumes:
   postgres_data:
