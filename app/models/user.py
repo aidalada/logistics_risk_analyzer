@@ -14,3 +14,4 @@ class User(Base):
     delay_count = Column(Integer, default=0)  # Для статистики задержек
 
     is_active = Column(Boolean, default=True)
+    verification_code = Column(String, nullable=True)
