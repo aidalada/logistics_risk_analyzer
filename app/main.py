@@ -163,6 +163,41 @@ async def resend_code(
     return {"message": "Новый проверочный код отправлен"}
 
 
+@app.post("/forgot-password")
+async def forgot_password(email: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    user = db.query(user_model.User).filter(user_model.User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь с такой почтой не найден")
+
+    # Генерируем секретный код для сброса
+    reset_code = str(random.randint(100000, 999999))
+    user.verification_code = reset_code
+    db.commit()
+
+    message = MessageSchema(
+        subject="Logistics App - Password Reset",
+        recipients=[user.email],
+        body=f"Your password reset code is: {reset_code}. If you didn't request this, ignore this email.",
+        subtype="html"
+    )
+    fm = FastMail(conf)
+    background_tasks.add_task(fm.send_message, message)
+    return {"message": "Код для сброса пароля отправлен на почту"}
+
+
+@app.post("/reset-password")
+def reset_password(email: str, code: str, new_password: str, db: Session = Depends(get_db)):
+    user = db.query(user_model.User).filter(user_model.User.email == email).first()
+    if not user or user.verification_code != code:
+        raise HTTPException(status_code=400, detail="Неверный код или email")
+
+    # Хешируем новый пароль и сохраняем
+    user.hashed_password = security.get_password_hash(new_password)
+    user.verification_code = None # Очищаем код после использования
+    db.commit()
+    return {"message": "Пароль успешно изменен. Теперь вы можете войти с новым паролем."}
+
+
 @app.post("/login", response_model=user_schema.Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(user_model.User).filter(user_model.User.email == form_data.username).first()
