@@ -135,6 +135,8 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Неверный email или пароль")
 
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Ваш аккаунт деактивирован. Обратитесь к админу.")
     # Проверка верификации при логине (важно для ТЗ)
     if not user.is_verified:
         raise HTTPException(status_code=403, detail="Пожалуйста, подтвердите email")
@@ -150,18 +152,21 @@ def read_users_me(current_user: user_model.User = Depends(get_current_user)):
 
 # --- АДМИН-ФУНКЦИИ ---
 
-@app.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@app.delete("/users/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db), current_user: user_model.User = Depends(get_current_user)):
-    if current_user.role != "admin":  #
+    # Только админ может деактивировать
+    if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    user_to_delete = db.query(user_model.User).filter(user_model.User.id == user_id).first()
-    if not user_to_delete:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    user = db.query(user_model.User).filter(user_model.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    db.delete(user_to_delete)
+    # Вместо db.delete(user) делаем:
+    user.is_active = False
     db.commit()
-    return None
+
+    return {"message": f"User {user_id} has been deactivated"}
 
 
 @app.patch("/users/drivers/{user_id}/verify")
