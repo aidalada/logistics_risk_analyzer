@@ -1,12 +1,11 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 
 # Что мы просим у пользователя при регистрации
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str
-    full_name: str  # Добавляем имя при регистрации
-
+    password: str = Field(..., min_length=8, description="Пароль минимум 8 символов")
+    full_name: str = Field(..., min_length=2)
 # Что мы отдаем пользователю (нельзя отдавать пароль!)
 class UserOut(BaseModel):
     id: int
