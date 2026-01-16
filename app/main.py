@@ -129,6 +129,40 @@ def verify_email(email: str, code: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Wrong verification code")
 
 
+@app.post("/resend-code")
+async def resend_code(
+        email: str,
+        background_tasks: BackgroundTasks,
+        db: Session = Depends(get_db)
+):
+    # 1. Ищем пользователя в базе
+    user = db.query(user_model.User).filter(user_model.User.email == email).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    # 2. Если уже подтвержден, новый код не нужен
+    if user.is_verified:
+        return {"message": "Аккаунт уже подтвержден. Вы можете войти."}
+
+    # 3. Генерируем НОВЫЙ случайный код
+    new_code = str(random.randint(100000, 999999))
+    user.verification_code = new_code
+    db.commit()
+
+    # 4. Отправляем новое письмо через фоновую задачу
+    message = MessageSchema(
+        subject="Logistics App - NEW Verification Code",
+        recipients=[user.email],
+        body=f"Your new code is: {new_code}",
+        subtype="html"
+    )
+    fm = FastMail(conf)
+    background_tasks.add_task(fm.send_message, message)
+
+    return {"message": "Новый проверочный код отправлен"}
+
+
 @app.post("/login", response_model=user_schema.Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(user_model.User).filter(user_model.User.email == form_data.username).first()
