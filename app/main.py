@@ -20,7 +20,43 @@ from app.core.security import verify_password, create_access_token
 from app.services import ml_service
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 
-app = FastAPI(title="Logistics CRM API")
+# Описание тегов для Swagger
+tags_metadata = [
+    {
+        "name": "Authentication",
+        "description": "Registration, login and access resending.",
+    },
+    {
+        "name": "Orders",
+        "description": "Order managing and risk counting with ML.",
+    },
+    {
+        "name": "User Profile",
+        "description": "Profile operations of current user.",
+    },
+    {
+        "name": "Admin Operations",
+        "description": "Analytics and users management (only for admins).",
+    },
+]
+
+app = FastAPI(
+    title="Logistics Risk Management API",
+    description="""
+    API for managing logistics risks and automation of orders.
+
+    ### Main features:
+    * **Security**: JWT authorization and verification via email.
+    * **Intellect**: Risk assessment of orders with Machine Learning.
+    * **Control**: Full cycle of managing orders and analytic panel.
+    """,
+    version="1.0.0",
+    contact={
+        "name": "Yerulan Arman",
+        "email": "aidala.damyn@gmail.com",
+    },
+    openapi_tags=tags_metadata
+)
 
 # Автоматическое создание таблиц
 Base.metadata.create_all(bind=engine)
@@ -38,7 +74,7 @@ app.add_middleware(
 # Конфигурация почты
 conf = ConnectionConfig(
     MAIL_USERNAME="hanagooru@gmail.com",
-    MAIL_PASSWORD="xjlr oyzw pfks nwqv",  # Твой App Password
+    MAIL_PASSWORD="xjlr oyzw pfks nwqv",
     MAIL_FROM="hanagooru@gmail.com",
     MAIL_PORT=587,
     MAIL_SERVER="smtp.gmail.com",
@@ -69,22 +105,15 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(securit
     return user
 
 
-# --- ЭНДПОИНТЫ ПОЛЬЗОВАТЕЛЕЙ ---
+# --- AUTHENTICATION & SECURITY ---
 
-@app.post("/register", response_model=user_schema.UserOut)
-async def register_user(
-        user: user_schema.UserCreate,
-        background_tasks: BackgroundTasks,
-        db: Session = Depends(get_db)
-):
-    # 1. Проверка на дубликаты
+@app.post("/register", response_model=user_schema.UserOut, tags=["Authentication"],
+          summary="Регистрация нового пользователя")
+async def register_user(user: user_schema.UserCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     if db.query(user_model.User).filter(user_model.User.email == user.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # 2. Генерируем ОДИН код для базы и письма
     generated_code = str(random.randint(100000, 999999))
-
-    # 3. Создаем пользователя
     hashed_pwd = security.get_password_hash(user.password)
     new_user = user_model.User(
         email=user.email,
@@ -92,173 +121,113 @@ async def register_user(
         full_name=user.full_name,
         role="client",
         is_verified=False,
-        verification_code=generated_code  # Код сохраняется здесь
+        verification_code=generated_code
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
 
-    # 4. Отправляем письмо с ЭТИМ ЖЕ кодом
     message = MessageSchema(
         subject="Logistics App - Verification Code",
         recipients=[user.email],
-        body=f"Your verification code is: {generated_code}",  # Тот же код в письме
+        body=f"Your verification code is: {generated_code}",
         subtype="html"
     )
     fm = FastMail(conf)
     background_tasks.add_task(fm.send_message, message)
-
     return new_user
 
 
-@app.post("/verify-email")
+@app.post("/verify-email", tags=["Authentication"], summary="email verification")
 def verify_email(email: str, code: str, db: Session = Depends(get_db)):
-    # 1. Ищем пользователя
     user = db.query(user_model.User).filter(user_model.User.email == email).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # 2. Проверяем код (сравнение того, что пришло, с тем, что в базе)
-    if user.verification_code == code:
-        user.is_verified = True
-        user.verification_code = None  # Очищаем код после успеха
-        db.commit()
-        return {"status": "success", "message": "Account activated!"}
-    else:
+    if not user or user.verification_code != code:
         raise HTTPException(status_code=400, detail="Wrong verification code")
+    user.is_verified = True
+    user.verification_code = None
+    db.commit()
+    return {"status": "success", "message": "Account activated!"}
 
 
-@app.post("/resend-code")
-async def resend_code(
-        email: str,
-        background_tasks: BackgroundTasks,
-        db: Session = Depends(get_db)
-):
-    # 1. Ищем пользователя в базе
+@app.post("/resend-code", tags=["Authentication"], summary="verification code resent")
+async def resend_code(email: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user = db.query(user_model.User).filter(user_model.User.email == email).first()
+    if not user or user.is_verified:
+        raise HTTPException(status_code=400, detail="User not found or already verified")
 
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-
-    # 2. Если уже подтвержден, новый код не нужен
-    if user.is_verified:
-        return {"message": "Аккаунт уже подтвержден. Вы можете войти."}
-
-    # 3. Генерируем НОВЫЙ случайный код
     new_code = str(random.randint(100000, 999999))
     user.verification_code = new_code
     db.commit()
 
-    # 4. Отправляем новое письмо через фоновую задачу
     message = MessageSchema(
-        subject="Logistics App - NEW Verification Code",
+        subject="Logistics App - NEW Code",
         recipients=[user.email],
-        body=f"Your new code is: {new_code}",
+        body=f"New code: {new_code}",
         subtype="html"
     )
     fm = FastMail(conf)
     background_tasks.add_task(fm.send_message, message)
+    return {"message": "New code sent"}
 
-    return {"message": "Новый проверочный код отправлен"}
 
-
-@app.post("/forgot-password")
+@app.post("/forgot-password", tags=["Authentication"], summary="password recovery request")
 async def forgot_password(email: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user = db.query(user_model.User).filter(user_model.User.email == email).first()
     if not user:
-        raise HTTPException(status_code=404, detail="Пользователь с такой почтой не найден")
+        raise HTTPException(status_code=404, detail="Email not found")
 
-    # Генерируем секретный код для сброса
     reset_code = str(random.randint(100000, 999999))
     user.verification_code = reset_code
     db.commit()
 
     message = MessageSchema(
-        subject="Logistics App - Password Reset",
+        subject="Password Reset",
         recipients=[user.email],
-        body=f"Your password reset code is: {reset_code}. If you didn't request this, ignore this email.",
+        body=f"Reset code: {reset_code}",
         subtype="html"
     )
     fm = FastMail(conf)
     background_tasks.add_task(fm.send_message, message)
-    return {"message": "Код для сброса пароля отправлен на почту"}
+    return {"message": "Reset code sent"}
 
 
-@app.post("/reset-password")
+@app.post("/reset-password", tags=["Authentication"], summary="set new password")
 def reset_password(email: str, code: str, new_password: str, db: Session = Depends(get_db)):
     user = db.query(user_model.User).filter(user_model.User.email == email).first()
     if not user or user.verification_code != code:
-        raise HTTPException(status_code=400, detail="Неверный код или email")
-
-    # Хешируем новый пароль и сохраняем
+        raise HTTPException(status_code=400, detail="Invalid code")
     user.hashed_password = security.get_password_hash(new_password)
-    user.verification_code = None # Очищаем код после использования
+    user.verification_code = None
     db.commit()
-    return {"message": "Пароль успешно изменен. Теперь вы можете войти с новым паролем."}
+    return {"message": "Password updated"}
 
 
-@app.post("/login", response_model=user_schema.Token)
+@app.post("/login", response_model=user_schema.Token, tags=["Authentication"], summary="login into the system (getting JWT)")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(user_model.User).filter(user_model.User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Неверный email или пароль")
-
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Ваш аккаунт деактивирован. Обратитесь к админу.")
-    # Проверка верификации при логине (важно для ТЗ)
-    if not user.is_verified:
-        raise HTTPException(status_code=403, detail="Пожалуйста, подтвердите email")
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+    if not user.is_active or not user.is_verified:
+        raise HTTPException(status_code=403, detail="Account not active or not verified")
 
     access_token = create_access_token(data={"sub": user.email})
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@app.get("/users/me", response_model=user_schema.UserOut)
+# --- USER PROFILE ---
+
+@app.get("/users/me", response_model=user_schema.UserOut, tags=["User Profile"], summary="current user data")
 def read_users_me(current_user: user_model.User = Depends(get_current_user)):
     return current_user
 
 
-# --- АДМИН-ФУНКЦИИ ---
+# --- ORDERS ---
 
-@app.delete("/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db), current_user: user_model.User = Depends(get_current_user)):
-    # Только админ может деактивировать
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
-    user = db.query(user_model.User).filter(user_model.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Вместо db.delete(user) делаем:
-    user.is_active = False
-    db.commit()
-
-    return {"message": f"User {user_id} has been deactivated"}
-
-
-@app.patch("/users/drivers/{user_id}/verify")
-def verify_driver(user_id: int, verify: bool, db: Session = Depends(get_db),
-                  current_user: user_model.User = Depends(get_current_user)):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
-    driver = db.query(user_model.User).filter(user_model.User.id == user_id, user_model.User.role == "driver").first()
-    if not driver:
-        raise HTTPException(status_code=404, detail="Driver not found")
-
-    driver.is_verified = verify
-    db.commit()
-    return {"message": f"Driver verification set to {verify}"}
-
-
-# --- ЗАКАЗЫ И АНАЛИТИКА ---
-
-@app.post("/orders", response_model=order_schema.OrderOut)
+@app.post("/orders", response_model=order_schema.OrderOut, tags=["Orders"],
+          summary="Создать новый заказ с оценкой риска")
 def create_order(order: order_schema.OrderCreate, db: Session = Depends(get_db),
                  current_user: user_model.User = Depends(get_current_user)):
-    risk_score, risk_level = ml_service.predict_risk(  #
+    risk_score, risk_level = ml_service.predict_risk(
         distance=order.distance, cargo_type=order.cargo_type, driver_exp=3, hour=12, weather=0
     )
     new_order = order_model.Order(
@@ -270,7 +239,7 @@ def create_order(order: order_schema.OrderCreate, db: Session = Depends(get_db),
     return new_order
 
 
-@app.get("/orders", response_model=List[order_schema.OrderOut])
+@app.get("/orders", response_model=List[order_schema.OrderOut], tags=["Orders"], summary="list of all orders")
 def get_orders(search: Optional[str] = None, status: Optional[str] = None, db: Session = Depends(get_db),
                current_user: user_model.User = Depends(get_current_user)):
     query = db.query(order_model.Order)
@@ -284,14 +253,29 @@ def get_orders(search: Optional[str] = None, status: Optional[str] = None, db: S
     return query.all()
 
 
-@app.get("/analytics/summary", response_model=order_schema.AnalyticsSummary)
+# --- ADMIN OPERATIONS ---
+
+@app.get("/analytics/summary", response_model=order_schema.AnalyticsSummary, tags=["Admin Operations"],
+         summary="Сводная статистика (Админ)")
 def get_analytics_summary(db: Session = Depends(get_db), current_user: user_model.User = Depends(get_current_user)):
-    query = db.query(order_model.Order)
     if current_user.role != "admin":
-        query = query.filter(order_model.Order.owner_id == current_user.id)
+        raise HTTPException(status_code=403, detail="Admin only")
+    query = db.query(order_model.Order)
     return {
         "total_orders": query.count(),
         "high_risk_count": query.filter(order_model.Order.risk_level == "High").count(),
         "in_transit_count": query.filter(order_model.Order.status == "In Transit").count(),
         "delivered_count": query.filter(order_model.Order.status == "Delivered").count()
     }
+
+
+@app.delete("/users/{user_id}", tags=["Admin Operations"], summary="Деактивация пользователя (Soft Delete)")
+def delete_user(user_id: int, db: Session = Depends(get_db), current_user: user_model.User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    user = db.query(user_model.User).filter(user_model.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.is_active = False
+    db.commit()
+    return {"message": "User deactivated"}
