@@ -49,15 +49,26 @@ app = FastAPI(
     openapi_tags=tags_metadata
 )
 
-origins = [
-    "http://localhost:3000", 
-    "http://127.0.0.1:3000",
-    "http://localhost:3002" 
-]
+def _parse_csv_env(name: str, default: str) -> list[str]:
+    raw = os.getenv(name, default)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+# Comma-separated list of exact origins, e.g.
+# CORS_ORIGINS="http://localhost:3000,https://your-app.vercel.app"
+origins = _parse_csv_env(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3002",
+)
+
+# Optional regex for preview deployments (Vercel), e.g.
+# CORS_ORIGIN_REGEX="https://.*\\.vercel\\.app"
+cors_origin_regex = os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
