@@ -7,10 +7,16 @@ from fastapi.security import OAuth2PasswordBearer
 
 load_dotenv()
 
-# Настройки из .env
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
+# Settings from environment (with sane defaults for deployment).
+# In production you should override SECRET_KEY.
+SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-render")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+
+_expire_raw = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
+try:
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(_expire_raw)
+except ValueError:
+    ACCESS_TOKEN_EXPIRE_MINUTES = 60
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
