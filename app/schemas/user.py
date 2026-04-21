@@ -1,12 +1,16 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import Literal, Optional
 
-# Что мы просим у пользователя при регистрации
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, description="Пароль минимум 8 символов")
+    role: Literal["client", "operator", "admin"] = "client"
+
+
+class UserCreateLegacy(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8, description="Пароль минимум 8 символов")
     full_name: str = Field(..., min_length=2)
-# Что мы отдаем пользователю (нельзя отдавать пароль!)
 class UserOut(BaseModel):
     id: int
     email: EmailStr
@@ -25,3 +29,4 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     email: Optional[str] = None
+    role: Optional[str] = None
