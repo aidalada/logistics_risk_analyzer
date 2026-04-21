@@ -1,0 +1,20 @@
+groups:
+  - name: logistics_alerts
+    rules:
+      - alert: HighLatencyWarning
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="logistics_app"}[1m])) by (le)) > 0.5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API Latency is too high"
+          description: "95th percentile latency is above 500ms for more than 1 minute."
+
+      - alert: BackendDownCritical
+        expr: up{job="logistics_app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend API is DOWN"
+          description: "The logistics_app container is not responding. SRE team wake up!"

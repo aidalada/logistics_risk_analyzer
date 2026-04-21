@@ -1,63 +1,68 @@
+from enum import Enum
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime
 
-# Базовая схема с общими полями и валидацией
-class OrderBase(BaseModel):
-    cargo_description: str = Field(
-        ...,
-        min_length=5,
-        max_length=500,
-        description="Детальное описание груза (минимум 5 символов)"
-    )
-    destination: str = Field(
-        ...,
-        min_length=3,
-        max_length=200,
-        description="Адрес назначения"
-    )
-    weight: float = Field(
-        ...,
-        gt=0,
-        lt=50000,
-        description="Вес груза в кг (должен быть больше 0 и меньше 50 тонн)"
-    )
-    distance: float = Field(
-        ...,
-        gt=0,
-        lt=10000,
-        description="Расстояние в км (от 0.1 до 10 000)"
-    )
-    # Используем str для типа груза, так как в UI пользователю легче выбрать название
-    cargo_type: str = Field(
-        ...,
-        min_length=2,
-        description="Категория груза (например: Хрупкое, Опасное)"
-    )
-    delivery_date: datetime = Field(
-        ...,
-        description="Дата и время доставки в формате ISO (например: 2026-01-20T12:00:00)"
-    )
 
-# Схема для создания заказа (то, что присылает фронтенд)
+class OrderStatus(str, Enum):
+    NEW = "New"
+    PROCESSING = "Processing"
+    IN_TRANSIT = "In Transit"
+    DELIVERED = "Delivered"
+    CANCELED = "Canceled"
+
+class OrderBase(BaseModel):
+    price: float = Field(..., ge=0)
+    freight_value: float = Field(..., ge=0)
+    weight_g: float = Field(..., gt=0)
+    length_cm: float = Field(..., gt=0)
+    height_cm: float = Field(..., gt=0)
+    width_cm: float = Field(..., gt=0)
+    category: str = Field(..., min_length=2, max_length=200)
+    payment_type: Literal["credit_card", "boleto", "voucher", "debit_card", "not_defined", "unknown"] = "unknown"
+    installments: int = Field(..., ge=1, le=24)
+    customer_lat: float = Field(..., ge=-90, le=90)
+    customer_lng: float = Field(..., ge=-180, le=180)
+    seller_lat: float = Field(..., ge=-90, le=90)
+    seller_lng: float = Field(..., ge=-180, le=180)
+    purchase_timestamp: datetime
+    estimated_delivery_date: datetime
+    order_approved_at: Optional[datetime] = None
+    customer_state: str = Field(..., min_length=2, max_length=2)
+
 class OrderCreate(OrderBase):
     pass
 
-# Схема для ответа (то, что возвращает бэкенд)
 class OrderOut(OrderBase):
     id: int
     owner_id: int
-    risk_score: float
+    delay_probability: float
+    damage_probability: float
+    cancel_probability: float
     risk_level: str
-    status: str
+    status: OrderStatus
     created_at: datetime
 
     class Config:
-        from_attributes = True # Позволяет Pydantic работать с моделями SQLAlchemy
+        from_attributes = True
 
-# Схема для сводной аналитики
+
+class OrderOutClient(BaseModel):
+    id: int
+    owner_id: int
+    status: OrderStatus
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class AnalyticsSummary(BaseModel):
     total_orders: int
     high_risk_count: int
     in_transit_count: int
     delivered_count: int
+
+
+class OrderStatusUpdate(BaseModel):
+    status: OrderStatus

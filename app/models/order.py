@@ -7,28 +7,31 @@ class Order(Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True, index=True)
-    cargo_description = Column(String, nullable=False)  # Из Figma: "Medical Supplies"
-    destination = Column(String, nullable=False)  # "Chicago, IL"
-    weight = Column(Float)  # 500 kg
-    distance = Column(Float)  # 800 km
-    cargo_type = Column(Integer)  # 0, 1, 2 (как в ML модели)
-    delivery_date = Column(String)  # Дата доставки
-
-    # Результаты работы твоей ML модели:
-    risk_score = Column(Integer)  # 0, 1 или 2
-    risk_level = Column(String)  # "Low", "Medium", "High" (для фронта)
-
-    status = Column(String, default="New")  # New, In Transit, Delivered
-
-    owner_id = Column(Integer, ForeignKey("users.id"))
-    driver_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String, default="New", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-class OrderHistory(Base):
-    __tablename__ = "order_history"
+    # Input data
+    price = Column(Float, nullable=False)
+    freight_value = Column(Float, nullable=False)
+    weight_g = Column(Float, nullable=False)
+    length_cm = Column(Float, nullable=False)
+    height_cm = Column(Float, nullable=False)
+    width_cm = Column(Float, nullable=False)
+    category = Column(String, nullable=False)
+    payment_type = Column(String, nullable=False)
+    installments = Column(Integer, nullable=False)
+    customer_lat = Column(Float, nullable=False)
+    customer_lng = Column(Float, nullable=False)
+    seller_lat = Column(Float, nullable=False)
+    seller_lng = Column(Float, nullable=False)
+    purchase_timestamp = Column(DateTime(timezone=True), nullable=False)
+    estimated_delivery_date = Column(DateTime(timezone=True), nullable=False)
+    order_approved_at = Column(DateTime(timezone=True), nullable=True)
+    customer_state = Column(String, nullable=False)
 
-    id = Column(Integer, primary_key=True, index=True)
-    order_id = Column(Integer, ForeignKey("orders.id"))
-    old_status = Column(String, nullable=True)
-    new_status = Column(String)
-    changed_at = Column(DateTime(timezone=True), server_default=func.now())
+    # ML results
+    delay_probability = Column(Float, nullable=False)
+    damage_probability = Column(Float, nullable=False)
+    cancel_probability = Column(Float, nullable=False)
+    risk_level = Column(String, nullable=False)

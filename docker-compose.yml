@@ -8,20 +8,92 @@ services:
       - POSTGRES_PASSWORD=password
       - POSTGRES_DB=logistics_risk_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - logistics_network
+
+  ml_service:
+    build:
+      context: .
+      dockerfile: ml_service/Dockerfile
+    container_name: ml_service
+    ports:
+      - "8001:8001"
+    networks:
+      - logistics_network
 
   app:
     build: .
     container_name: logistics_app
+    volumes:
+      - ./app:/code/app  
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
-    depends_on:
-      - logistics_db
+    #depends_on:
+      #- logistics_db
+      #- ml_service
+    env_file:     
+      - .env
     environment:
-      - DATABASE_URL=postgresql://user:password@logistics_db:5432/logistics_risk_db
-      - JWT_SECRET=your_secret_key
+      - DATABASE_URL=${DATABASE_URL} 
+      - JWT_SECRET=${JWT_SECRET}
+      - ML_SERVICE_URL=http://ml_service:8001
+    networks:
+      - logistics_network
+
+  frontend:
+    build: ./frontend
+    container_name: logistics_frontend
+    ports:
+      - "3002:3000" 
+    depends_on:
+      - app
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true 
+    networks:
+      - logistics_network
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml 
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - app
+      - ml_service
+    networks:
+      - logistics_network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+    networks:
+      - logistics_network
+
+  node_exporter:
+    image: prom/node-exporter:latest
+    container_name: node_exporter
+    ports:
+      - "9100:9100"
+    networks:
+      - logistics_network
 
 volumes:
   postgres_data:
+
+networks:
+  logistics_network:

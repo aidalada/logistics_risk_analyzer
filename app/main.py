@@ -1,11 +1,13 @@
 import csv
+import os
 import random
 from io import StringIO
-from typing import List, Optional
+from typing import List, Optional, Union
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware 
 from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
+import httpx
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
 
@@ -13,31 +15,20 @@ from jose import JWTError, jwt
 from app.core.database import engine, Base, get_db
 from app.models import user as user_model
 from app.models import order as order_model
+from app.models.user import UserRole
 from app.schemas import user as user_schema
 from app.schemas import order as order_schema
 from app.core import security
 from app.core.security import verify_password, create_access_token
-from app.services import ml_service
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+from prometheus_fastapi_instrumentator import Instrumentator
+from app.services.ml_risk import predict_risks
 
-# Описание тегов для Swagger
 tags_metadata = [
-    {
-        "name": "Authentication",
-        "description": "Registration, login and access resending.",
-    },
-    {
-        "name": "Orders",
-        "description": "Order managing and risk counting with ML.",
-    },
-    {
-        "name": "User Profile",
-        "description": "Profile operations of current user.",
-    },
-    {
-        "name": "Admin Operations",
-        "description": "Analytics and users management (only for admins).",
-    },
+    {"name": "Authentication", "description": "Registration, login and access resending."},
+    {"name": "Orders", "description": "Order managing and risk counting with ML."},
+    {"name": "User Profile", "description": "Profile operations of current user."},
+    {"name": "Admin Operations", "description": "Analytics and users management (only for admins)."},
 ]
 
 app = FastAPI(
@@ -58,11 +49,12 @@ app = FastAPI(
     openapi_tags=tags_metadata
 )
 
-# Автоматическое создание таблиц
-Base.metadata.create_all(bind=engine)
+origins = [
+    "http://localhost:3000", 
+    "http://127.0.0.1:3000",
+    "http://localhost:3002" 
+]
 
-# Настройка CORS
-origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -71,10 +63,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Конфигурация почты
+Instrumentator().instrument(app).expose(app)
+ML_SERVICE_URL = os.getenv("ML_SERVICE_URL", "http://ml_service:8001")
+
+
+@app.get("/health", tags=["Admin Operations"], summary="Health check")
+def healthcheck():
+    return {"status": "ok"}
+
+
+@app.on_event("startup")
+def on_startup():
+    """
+    Create tables on startup with retry.
+    In docker-compose, Postgres may not be ready when the app process starts.
+    """
+    last_error: Exception | None = None
+    for attempt in range(1, 11):
+        try:
+            Base.metadata.create_all(bind=engine)
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            import time
+
+            time.sleep(min(2 * attempt, 10))
+    # If DB is still not reachable, fail fast with a clear error.
+    raise RuntimeError("Database is not reachable on startup") from last_error
+
 conf = ConnectionConfig(
     MAIL_USERNAME="hanagooru@gmail.com",
-    MAIL_PASSWORD="xjlr oyzw pfks nwqv",
+    MAIL_PASSWORD="xjlr oyzw pfks nwqv", 
     MAIL_FROM="hanagooru@gmail.com",
     MAIL_PORT=587,
     MAIL_SERVER="smtp.gmail.com",
@@ -82,8 +101,6 @@ conf = ConnectionConfig(
     MAIL_SSL_TLS=False,
 )
 
-
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
 def get_current_user(db: Session = Depends(get_db), token: str = Depends(security.oauth2_scheme)):
     credentials_exception = HTTPException(
@@ -105,11 +122,21 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(securit
     return user
 
 
-# --- AUTHENTICATION & SECURITY ---
+def require_operator(current_user: user_model.User = Depends(get_current_user)):
+    if current_user.role not in {UserRole.OPERATOR.value, UserRole.ADMIN.value}:
+        raise HTTPException(status_code=403, detail="Operator or admin role required")
+    return current_user
 
-@app.post("/register", response_model=user_schema.UserOut, tags=["Authentication"],
-          summary="Регистрация нового пользователя")
-async def register_user(user: user_schema.UserCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+
+def require_admin(current_user: user_model.User = Depends(get_current_user)):
+    if current_user.role != UserRole.ADMIN.value:
+        raise HTTPException(status_code=403, detail="Admin only")
+    return current_user
+
+
+
+@app.post("/register", response_model=user_schema.UserOut, tags=["Authentication"], summary="Регистрация нового пользователя")
+async def register_user(user: user_schema.UserCreateLegacy, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     if db.query(user_model.User).filter(user_model.User.email == user.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -119,7 +146,7 @@ async def register_user(user: user_schema.UserCreate, background_tasks: Backgrou
         email=user.email,
         hashed_password=hashed_pwd,
         full_name=user.full_name,
-        role="client",
+        role=UserRole.CLIENT.value,
         is_verified=False,
         verification_code=generated_code
     )
@@ -138,6 +165,28 @@ async def register_user(user: user_schema.UserCreate, background_tasks: Backgrou
     return new_user
 
 
+@app.post("/auth/register", response_model=user_schema.Token, tags=["Authentication"], summary="quick registration with selected role")
+def register_user_with_role(user: user_schema.UserCreate, db: Session = Depends(get_db)):
+    if db.query(user_model.User).filter(user_model.User.email == user.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    hashed_password = security.get_password_hash(user.password)
+    new_user = user_model.User(
+        email=user.email,
+        hashed_password=hashed_password,
+        full_name=user.email.split("@")[0],
+        role=user.role,
+        is_verified=True,
+        is_active=True,
+        verification_code=None
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    access_token = create_access_token(data={"sub": new_user.email, "role": new_user.role})
+    return {"access_token": access_token, "token_type": "bearer"}
+
 @app.post("/verify-email", tags=["Authentication"], summary="email verification")
 def verify_email(email: str, code: str, db: Session = Depends(get_db)):
     user = db.query(user_model.User).filter(user_model.User.email == email).first()
@@ -147,7 +196,6 @@ def verify_email(email: str, code: str, db: Session = Depends(get_db)):
     user.verification_code = None
     db.commit()
     return {"status": "success", "message": "Account activated!"}
-
 
 @app.post("/resend-code", tags=["Authentication"], summary="verification code resent")
 async def resend_code(email: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -169,7 +217,6 @@ async def resend_code(email: str, background_tasks: BackgroundTasks, db: Session
     background_tasks.add_task(fm.send_message, message)
     return {"message": "New code sent"}
 
-
 @app.post("/forgot-password", tags=["Authentication"], summary="password recovery request")
 async def forgot_password(email: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user = db.query(user_model.User).filter(user_model.User.email == email).first()
@@ -190,7 +237,6 @@ async def forgot_password(email: str, background_tasks: BackgroundTasks, db: Ses
     background_tasks.add_task(fm.send_message, message)
     return {"message": "Reset code sent"}
 
-
 @app.post("/reset-password", tags=["Authentication"], summary="set new password")
 def reset_password(email: str, code: str, new_password: str, db: Session = Depends(get_db)):
     user = db.query(user_model.User).filter(user_model.User.email == email).first()
@@ -201,7 +247,6 @@ def reset_password(email: str, code: str, new_password: str, db: Session = Depen
     db.commit()
     return {"message": "Password updated"}
 
-
 @app.post("/login", response_model=user_schema.Token, tags=["Authentication"], summary="login into the system (getting JWT)")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(user_model.User).filter(user_model.User.email == form_data.username).first()
@@ -210,28 +255,28 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not user.is_active or not user.is_verified:
         raise HTTPException(status_code=403, detail="Account not active or not verified")
 
-    access_token = create_access_token(data={"sub": user.email})
+    access_token = create_access_token(data={"sub": user.email, "role": user.role})
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-# --- USER PROFILE ---
 
 @app.get("/users/me", response_model=user_schema.UserOut, tags=["User Profile"], summary="current user data")
 def read_users_me(current_user: user_model.User = Depends(get_current_user)):
     return current_user
 
 
-# --- ORDERS ---
 
-@app.post("/orders", response_model=order_schema.OrderOut, tags=["Orders"],
-          summary="Создать новый заказ с оценкой риска")
-def create_order(order: order_schema.OrderCreate, db: Session = Depends(get_db),
-                 current_user: user_model.User = Depends(get_current_user)):
-    risk_score, risk_level = ml_service.predict_risk(
-        distance=order.distance, cargo_type=order.cargo_type, driver_exp=3, hour=12, weather=0
-    )
+@app.post("/orders", response_model=order_schema.OrderOut, tags=["Orders"], summary="Создать новый заказ и сохранить 3 ML-риска")
+def create_order(order: order_schema.OrderCreate, db: Session = Depends(get_db), current_user: user_model.User = Depends(require_operator)):
+    risk = predict_risks(order.model_dump())
     new_order = order_model.Order(
-        **order.model_dump(), risk_score=risk_score, risk_level=risk_level, owner_id=current_user.id, status="New"
+        **order.model_dump(),
+        owner_id=current_user.id,
+        status="New",
+        delay_probability=risk.delay_probability,
+        damage_probability=risk.damage_probability,
+        cancel_probability=risk.cancel_probability,
+        risk_level=risk.risk_level,
     )
     db.add(new_order)
     db.commit()
@@ -239,27 +284,56 @@ def create_order(order: order_schema.OrderCreate, db: Session = Depends(get_db),
     return new_order
 
 
-@app.get("/orders", response_model=List[order_schema.OrderOut], tags=["Orders"], summary="list of all orders")
-def get_orders(search: Optional[str] = None, status: Optional[str] = None, db: Session = Depends(get_db),
-               current_user: user_model.User = Depends(get_current_user)):
+@app.post("/ml/predict", tags=["Orders"], summary="Predict 3 ML risks (no save)")
+def predict_only(order: order_schema.OrderCreate, current_user: user_model.User = Depends(require_operator)):
+    risk = predict_risks(order.model_dump())
+    return {
+        "delay_probability": risk.delay_probability,
+        "damage_probability": risk.damage_probability,
+        "cancel_probability": risk.cancel_probability,
+        "risk_level": risk.risk_level,
+    }
+
+@app.get("/orders", response_model=List[Union[order_schema.OrderOut, order_schema.OrderOutClient]], tags=["Orders"], summary="list of all orders")
+def get_orders(search: Optional[str] = None, status: Optional[str] = None, db: Session = Depends(get_db), current_user: user_model.User = Depends(get_current_user)):
     query = db.query(order_model.Order)
-    if current_user.role != "admin":
+    if current_user.role == UserRole.CLIENT.value:
         query = query.filter(order_model.Order.owner_id == current_user.id)
-    if search:
-        query = query.filter((order_model.Order.cargo_description.ilike(f"%{search}%")) | (
-            order_model.Order.destination.ilike(f"%{search}%")))
+    # search/status filters can be reintroduced for new product later
     if status:
         query = query.filter(order_model.Order.status == status)
-    return query.all()
+    orders = query.all()
+    if current_user.role == UserRole.CLIENT.value:
+        return [order_schema.OrderOutClient.model_validate(order) for order in orders]
+    return orders
 
 
-# --- ADMIN OPERATIONS ---
+@app.patch(
+    "/orders/{order_id}/status",
+    response_model=order_schema.OrderOut,
+    tags=["Orders"],
+    summary="Update order status (freeze ML results)",
+)
+def update_order_status(
+    order_id: int,
+    payload: order_schema.OrderStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: user_model.User = Depends(require_operator),
+):
+    order = db.query(order_model.Order).filter(order_model.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    # IMPORTANT: ML probabilities are frozen at creation time.
+    # Status updates must not trigger any re-prediction.
+    order.status = payload.status.value
+    db.commit()
+    db.refresh(order)
+    return order
 
-@app.get("/analytics/summary", response_model=order_schema.AnalyticsSummary, tags=["Admin Operations"],
-         summary="Сводная статистика (Админ)")
-def get_analytics_summary(db: Session = Depends(get_db), current_user: user_model.User = Depends(get_current_user)):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
+
+
+@app.get("/analytics/summary", response_model=order_schema.AnalyticsSummary, tags=["Admin Operations"], summary="Сводная статистика (Админ)")
+def get_analytics_summary(db: Session = Depends(get_db), current_user: user_model.User = Depends(require_operator)):
     query = db.query(order_model.Order)
     return {
         "total_orders": query.count(),
@@ -268,11 +342,8 @@ def get_analytics_summary(db: Session = Depends(get_db), current_user: user_mode
         "delivered_count": query.filter(order_model.Order.status == "Delivered").count()
     }
 
-
 @app.delete("/users/{user_id}", tags=["Admin Operations"], summary="Деактивация пользователя (Soft Delete)")
-def delete_user(user_id: int, db: Session = Depends(get_db), current_user: user_model.User = Depends(get_current_user)):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
+def delete_user(user_id: int, db: Session = Depends(get_db), current_user: user_model.User = Depends(require_admin)):
     user = db.query(user_model.User).filter(user_model.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
