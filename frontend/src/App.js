@@ -190,7 +190,7 @@ function AppLayout() {
     payment_installments: 1,
   });
 
-  const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+  const API_URL = process.env.REACT_APP_API_URL || 'https://logistics-risk-analyzer.onrender.com';
   // ML is integrated into backend /orders now.
 
   const callApi = async (endpoint, method = 'GET', body = null, isForm = false) => {
