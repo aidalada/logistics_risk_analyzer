@@ -2,7 +2,7 @@ groups:
   - name: logistics_alerts
     rules:
       - alert: HighLatencyWarning
-        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="logistics_app"}[1m])) by (le)) > 0.5
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="order_service"}[1m])) by (le)) > 0.5
         for: 1m
         labels:
           severity: warning
@@ -11,7 +11,7 @@ groups:
           description: "95th percentile latency is above 500ms for more than 1 minute."
 
       - alert: BackendDownCritical
-        expr: up{job="logistics_app"} == 0
+        expr: up{job="order_service"} == 0
         for: 1m
         labels:
           severity: critical

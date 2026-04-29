@@ -9,8 +9,13 @@ load_dotenv()
 # Читаем адрес базы из .env
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Engine — это механизм связи с БД
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+# Engine — это механизм связи с БД.
+# pool_pre_ping helps recover stale/broken DB connections (e.g., cloud SSL drops).
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
 
 # SessionLocal — это "фабрика" сессий (каждый запрос к БД — новая сессия)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

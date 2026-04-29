@@ -190,7 +190,7 @@ function AppLayout() {
     payment_installments: 1,
   });
 
-  const API_URL = process.env.REACT_APP_API_URL || 'https://logistics-risk-analyzer.onrender.com';
+  const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080/api';
   // ML is integrated into backend /orders now.
 
   const callApi = async (endpoint, method = 'GET', body = null, isForm = false) => {
@@ -211,7 +211,13 @@ function AppLayout() {
       }
 
       const response = await fetch(`${API_URL}${endpoint}`, options);
-      const data = await response.json();
+      const responseText = await response.text();
+      let data;
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch (_parseError) {
+        data = { raw: responseText || 'Empty response' };
+      }
 
       if (response.ok) {
         setApiResponse(JSON.stringify(data, null, 2));
@@ -231,7 +237,7 @@ function AppLayout() {
     formData.append('username', email);
     formData.append('password', password);
 
-    const data = await callApi('/login', 'POST', formData, true);
+    const data = await callApi('/auth/login', 'POST', formData, true);
     if (data && data.access_token) {
       setToken(data.access_token);
       setRole(getUserRoleFromToken(data.access_token));

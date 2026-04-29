@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
-const API_URL = process.env.REACT_APP_API_URL || 'https://logistics-risk-analyzer.onrender.com';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080/api/auth';
 
 const ROLE_OPTIONS = [
   { value: 'client', label: 'Client' },
@@ -29,12 +29,18 @@ function Register({ onRegisterSuccess }) {
 
     setSubmitting(true);
     try {
-      const response = await fetch(`${API_URL}/auth/register`, {
+      const response = await fetch(`${API_URL}/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, role }),
       });
-      const data = await response.json();
+      const responseText = await response.text();
+      let data;
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch (_parseError) {
+        data = { detail: responseText || 'Invalid server response' };
+      }
 
       if (!response.ok) {
         setError(data?.detail || 'Не удалось зарегистрироваться');

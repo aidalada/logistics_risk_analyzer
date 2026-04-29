@@ -12,3 +12,8 @@ build/
 dist/
 
 *.csv
+
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars

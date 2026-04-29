@@ -1,0 +1,140 @@
+services:
+  logistics_db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: logistics_risk_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - logistics_network
+
+  ml_service:
+    image: logistics_project-ml_service:latest
+    ports:
+      - "8001:8001"
+    networks:
+      - logistics_network
+
+  auth-service:
+    image: logistics_app_base:latest
+    command: uvicorn services.auth_service.main:app --host 0.0.0.0 --port 8002
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+    ports:
+      - "8002:8002"
+    networks:
+      - logistics_network
+
+  user-service:
+    image: logistics_app_base:latest
+    command: uvicorn services.user_service.main:app --host 0.0.0.0 --port 8004
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key}
+      ALGORITHM: ${ALGORITHM:-HS256}
+    ports:
+      - "8004:8004"
+    networks:
+      - logistics_network
+
+  product-service:
+    image: logistics_app_base:latest
+    command: uvicorn services.product_service.main:app --host 0.0.0.0 --port 8003
+    ports:
+      - "8003:8003"
+    networks:
+      - logistics_network
+
+  order-service:
+    image: logistics_app_base:latest
+    command: uvicorn services.order_service.main:app --host 0.0.0.0 --port 8005
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      PRODUCT_SERVICE_URL: http://product-service:8003
+      ML_SERVICE_URL: http://ml_service:8001
+    ports:
+      - "8005:8005"
+    networks:
+      - logistics_network
+
+  chat-service:
+    image: logistics_app_base:latest
+    command: uvicorn services.chat_service.main:app --host 0.0.0.0 --port 8006
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key}
+      ALGORITHM: ${ALGORITHM:-HS256}
+    ports:
+      - "8006:8006"
+    networks:
+      - logistics_network
+
+  frontend:
+    image: logistics_project-frontend:latest
+    ports:
+      - "3002:80"
+    networks:
+      - logistics_network
+
+  gateway:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    configs:
+      - source: gateway_nginx_conf
+        target: /etc/nginx/nginx.conf
+    networks:
+      - logistics_network
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    configs:
+      - source: prometheus_conf
+        target: /etc/prometheus/prometheus.yml
+      - source: alert_rules_conf
+        target: /etc/prometheus/alert_rules.yml
+    networks:
+      - logistics_network
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3001:3000"
+    networks:
+      - logistics_network
+
+  node_exporter:
+    image: prom/node-exporter:latest
+    ports:
+      - "9100:9100"
+    networks:
+      - logistics_network
+
+volumes:
+  postgres_data:
+
+networks:
+  logistics_network:
+    driver: overlay
+    attachable: true
+
+configs:
+  gateway_nginx_conf:
+    file: ./gateway/nginx.conf
+  prometheus_conf:
+    file: ./prometheus.yml
+  alert_rules_conf:
+    file: ./alert_rules.yml
+

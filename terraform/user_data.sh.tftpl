@@ -1,0 +1,33 @@
+#!/bin/bash
+set -euxo pipefail
+
+dnf update -y
+dnf install -y git docker
+systemctl enable docker
+systemctl start docker
+usermod -aG docker ec2-user
+
+mkdir -p ${app_directory}
+if [ ! -d "${app_directory}/.git" ]; then
+  git clone --branch ${repo_branch} ${repo_url} ${app_directory}
+else
+  cd ${app_directory}
+  git fetch --all
+  git checkout ${repo_branch}
+  git pull --ff-only
+fi
+
+cd ${app_directory}
+
+if [ ! -f .env ]; then
+  cat > .env <<EOF
+DATABASE_URL=postgresql://user:password@logistics_db:5432/logistics_risk_db
+SECRET_KEY=terraform-generated-secret
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+EOF
+fi
+
+if [ "${create_app_stack}" = "true" ]; then
+  docker compose up -d --build
+fi
