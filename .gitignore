@@ -12,3 +12,6 @@ build/
 dist/
 
 *.csv
+
+terraform/
+.terraform/
