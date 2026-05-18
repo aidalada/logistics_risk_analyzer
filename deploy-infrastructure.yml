@@ -1,0 +1,46 @@
+---
+- name: SRE Automation - Swarm, Minikube and Deployments
+  hosts: all
+  become: false  # Запускаем от твоего текущего пользователя yerulan
+
+  tasks:
+    # ==========================================
+    # 1. АВТОМАТИЗАЦИЯ DOCKER SWARM
+    # ==========================================
+    - name: Check Swarm Status
+      command: docker info --format {% raw %}'{{.Swarm.LocalNodeState}}'{% endraw %}
+      register: swarm_status
+      changed_when: false
+
+    - name: Initialize Docker Swarm
+      command: docker swarm init --advertise-addr 127.0.0.1
+      when: swarm_status.stdout == "inactive"
+
+    # ==========================================
+    # 2. АВТОМАТИЗАЦИЯ KUBERNETES (MINIKUBE)
+    # ==========================================
+    - name: Check Minikube Status
+      command: minikube status
+      register: minikube_status
+      ignore_errors: true
+      changed_when: false
+
+    - name: Start Minikube if not running
+      command: minikube start --driver=docker
+      when: minikube_status.rc != 0
+
+    # ==========================================
+    # 3. АВТОМАТИЧЕСКИЙ ДЕПЛОЙ СЕРВИСОВ
+    # ==========================================
+    # Деплой в Docker Swarm
+    - name: Deploy Stack to Docker Swarm
+      shell: docker stack deploy -c ./docker-compose.yml logistics
+
+    # Деплой в Kubernetes (Minikube)
+    - name: Deploy Manifests to Kubernetes
+      shell: kubectl apply -f ./k8s/
+      register: k8s_deploy_result
+
+    - name: Show K8s Deployment Status
+      debug:
+        var: k8s_deploy_result.stdout_lines

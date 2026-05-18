@@ -1,0 +1,264 @@
+# ==========================================
+# 1. NOTIFICATION SERVICE (Порт 8004)
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+    spec:
+      containers:
+        - name: notification-service
+          image: logistics_notification_service:latest
+          imagePullPolicy: Never # Говорим K8s брать локальный собранный образ
+          command: ["uvicorn"]
+          args: ["services.notification_service.main:app", "--host", "0.0.0.0", "--port", "8004"]
+          ports:
+            - containerPort: 8004
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+spec:
+  selector:
+    app: notification-service
+  ports:
+    - protocol: TCP
+      port: 8004
+      targetPort: 8004
+
+---
+# ==========================================
+# 2. AUTH SERVICE (Порт 8002, 2 реплики)
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          image: logistics_auth_service:latest
+          imagePullPolicy: Never
+          command: ["uvicorn"]
+          args: ["services.auth_service.main:app", "--host", "0.0.0.0", "--port", "8002"]
+          ports:
+            - containerPort: 8002
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: logistics-secret
+                  key: DATABASE_URL
+            - name: NOTIFICATION_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: logistics-config
+                  key: NOTIFICATION_SERVICE_URL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - protocol: TCP
+      port: 8002
+      targetPort: 8002
+
+---
+# ==========================================
+# 3. USER SERVICE (Порт 8003, 2 реплики)
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: logistics_user_service:latest
+          imagePullPolicy: Never
+          command: ["uvicorn"]
+          args: ["services.user_service.main:app", "--host", "0.0.0.0", "--port", "8003"]
+          ports:
+            - containerPort: 8003
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: logistics-secret
+                  key: DATABASE_URL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+spec:
+  selector:
+    app: user-service
+  ports:
+    - protocol: TCP
+      port: 8003
+      targetPort: 8003
+
+---
+# ==========================================
+# 4. ORDER SERVICE (Порт 8005, 2 реплики)
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: logistics_order_service:latest
+          imagePullPolicy: Never
+          command: ["uvicorn"]
+          args: ["services.order_service.main:app", "--host", "0.0.0.0", "--port", "8005"]
+          ports:
+            - containerPort: 8005
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: logistics-secret
+                  key: DATABASE_URL
+            - name: ML_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: logistics-config
+                  key: ML_SERVICE_URL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+spec:
+  selector:
+    app: order-service
+  ports:
+    - protocol: TCP
+      port: 8005
+      targetPort: 8005
+
+---
+# ==========================================
+# 5. ANALYTICS SERVICE (Порт 8006)
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: analytics-service
+  template:
+    metadata:
+      labels:
+        app: analytics-service
+    spec:
+      containers:
+        - name: analytics-service
+          image: logistics_analytics_service:latest
+          imagePullPolicy: Never
+          command: ["uvicorn"]
+          args: ["services.analytics_service.main:app", "--host", "0.0.0.0", "--port", "8006"]
+          ports:
+            - containerPort: 8006
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: logistics-secret
+                  key: DATABASE_URL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-service
+spec:
+  selector:
+    app: analytics-service
+  ports:
+    - protocol: TCP
+      port: 8006
+      targetPort: 8006
+
+---
+# ==========================================
+# 6. ML SERVICE (Порт 8001)
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-service
+  template:
+    metadata:
+      labels:
+        app: ml-service
+    spec:
+      containers:
+        - name: ml-service
+          image: logistics_ml_service:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-service
+spec:
+  selector:
+    app: ml-service
+  ports:
+    - protocol: TCP
+      port: 8001
+      targetPort: 8001

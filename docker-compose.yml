@@ -1,99 +1,176 @@
 services:
+  # ==========================================
+  # 1. БАЗА ДАННЫХ
+  # ==========================================
   logistics_db:
     image: postgres:15
-    container_name: logistics_db
-    restart: always
     environment:
       - POSTGRES_USER=user
       - POSTGRES_PASSWORD=password
       - POSTGRES_DB=logistics_risk_db
-    ports:
-      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - logistics_network
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+  # ==========================================
+  # 2. МИКРОСЕРВИСЫ (Бэкенд)
+  # ==========================================
+  notification_service:
+    build: .
+    image: logistics_notification_service:latest
+    command: uvicorn services.notification_service.main:app --host 0.0.0.0 --port 8004
+    env_file: .env
+    networks:
+      - logistics_network
+    deploy:
+      replicas: 1
+
+  auth_service:
+    build: .
+    image: logistics_auth_service:latest
+    command: uvicorn services.auth_service.main:app --host 0.0.0.0 --port 8002
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://user:password@logistics_db:5432/logistics_risk_db
+      - NOTIFICATION_SERVICE_URL=http://notification_service:8004
+    networks:
+      - logistics_network
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+
+  user_service:
+    build: .
+    image: logistics_user_service:latest
+    command: uvicorn services.user_service.main:app --host 0.0.0.0 --port 8003
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://user:password@logistics_db:5432/logistics_risk_db
+    networks:
+      - logistics_network
+    deploy:
+      replicas: 2
+
+  order_service:
+    build: .
+    image: logistics_order_service:latest
+    command: uvicorn services.order_service.main:app --host 0.0.0.0 --port 8005
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://user:password@logistics_db:5432/logistics_risk_db
+      - ML_SERVICE_URL=http://ml_service:8001
+    networks:
+      - logistics_network
+    deploy:
+      replicas: 2
+
+  analytics_service:
+    build: .
+    image: logistics_analytics_service:latest
+    command: uvicorn services.analytics_service.main:app --host 0.0.0.0 --port 8006
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://user:password@logistics_db:5432/logistics_risk_db
+    networks:
+      - logistics_network
+    deploy:
+      replicas: 1
 
   ml_service:
     build:
       context: .
       dockerfile: ml_service/Dockerfile
-    container_name: ml_service
-    ports:
-      - "8001:8001"
+    image: logistics_ml_service:latest
     networks:
       - logistics_network
+    deploy:
+      replicas: 1
 
-  app:
-    build: .
-    container_name: logistics_app
-    volumes:
-      - ./app:/code/app  
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+  # ==========================================
+  # 3. API GATEWAY И ФРОНТЕНД
+  # ==========================================
+  gateway:
+    image: nginx:alpine
     ports:
-      - "8000:8000"
-    #depends_on:
-      #- logistics_db
-      #- ml_service
-    env_file:     
-      - .env
-    environment:
-      - DATABASE_URL=${DATABASE_URL} 
-      - JWT_SECRET=${JWT_SECRET}
-      - ML_SERVICE_URL=http://ml_service:8001
+      - "80:80"
     networks:
       - logistics_network
+    configs:
+      - source: nginx_config
+        target: /etc/nginx/nginx.conf
+    deploy:
+      replicas: 1
 
   frontend:
     build: ./frontend
-    container_name: logistics_frontend
+    image: logistics_frontend:latest
     ports:
       - "3002:3000" 
-    depends_on:
-      - app
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    environment:
-      - CHOKIDAR_USEPOLLING=true 
-    networks:
-      - logistics_network
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml 
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    depends_on:
-      - app
-      - ml_service
     networks:
       - logistics_network
 
+  # ==========================================
+  # 4. МОНИТОРИНГ И SRE (Используем Configs)
+  # ==========================================
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+      - source: alert_rules
+        target: /etc/prometheus/alert_rules.yml
+    volumes:
+      - prometheus_data:/prometheus
+    networks:
+      - logistics_network
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
   grafana:
     image: grafana/grafana:latest
-    container_name: grafana
     ports:
       - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
-    depends_on:
-      - prometheus
+    volumes:
+      - grafana_data:/var/lib/grafana
     networks:
       - logistics_network
+    deploy:
+      placement:
+        constraints: [node.role == manager]
 
   node_exporter:
     image: prom/node-exporter:latest
-    container_name: node_exporter
     ports:
       - "9100:9100"
     networks:
       - logistics_network
+    deploy:
+      mode: global
 
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:
+
+# Объявляем конфигурационные файлы для Swarm кластера
+configs:
+  nginx_config:
+    file: ./nginx.conf
+  prometheus_config:
+    file: ./prometheus.yml
+  alert_rules:
+    file: ./alert_rules.yml
 
 networks:
   logistics_network:
+    ## driver: overlay
